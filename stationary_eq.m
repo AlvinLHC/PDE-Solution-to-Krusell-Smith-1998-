@@ -1,0 +1,94 @@
+function steady = stationary_eq(r) 
+
+%% Global Parameters
+global rho gamma alpha delta lmean 
+global amin amax Na agrid da Nz zgrid ztran Zswitch amatrix zmatrix Naz
+
+%% Solving Stationary Equilibrium
+
+w = (1-alpha)*(alpha/(r+delta))^(alpha/(1-alpha));
+
+v0 = (r*amatrix + w*zmatrix).^(1-gamma)/(1-gamma)/rho;
+V = v0;
+
+dVaF = zeros(Na,Nz);
+dVaB = zeros(Na,Nz);
+
+maxiter = 100;
+accuracy = 1e-8;
+Delta = 2000;
+
+for iter = 1:maxiter 
+    
+    %----------------------------------
+    % Forward Difference 
+    %----------------------------------
+    dVaF(1:Na-1,:) = (V(2:Na,:) - V(1:Na-1,:))/da;
+    dVaF(Na,:) = (r*amax + w*zgrid).^(-gamma);
+    cF = dVaF.^(-1/gamma);
+    sF = r*amatrix + w*zmatrix - cF;
+    
+    %----------------------------------
+    % Backward Difference 
+    %----------------------------------
+    dVaB(2:Na,:) = (V(2:Na,:) - V(1:Na-1,:))/da;
+    dVaB(1,:) = (r*amin + w*zgrid).^(-gamma);
+    cB = dVaB.^(-1/gamma);
+    sB = r*amatrix + w*zmatrix - cB;
+    
+    %----------------------------------
+    % Upwind Scheme
+    %----------------------------------
+    Upwind_F = sF > 0;
+    Upwind_B = sB < 0;
+    Upwind0 = 1 - Upwind_F - Upwind_B;
+    
+    c0 = r*amatrix + w*zmatrix;
+    dVa0 = c0.^(-gamma);
+    
+    c = Upwind_F.*cF + Upwind_B.*cB + Upwind0.*c0;
+    dV0 = c0.^(-gamma);
+    s = r*amatrix + w*zmatrix - c;
+    u = c.^(1-gamma)/(1-gamma);
+    
+    %----------------------------------
+    % Construct A Matrix
+    %----------------------------------
+    A_up = max(sF,0)/da;
+    A_cent = -max(sF,0)/da + min(sB,0)/da;
+    A_low = -min(sB,0)/da;
+    
+    A_low(1,:) = 0;
+    A_low = A_low(:);
+    A_up(Na,:) = 0;
+    
+    A0 = spdiags(A_cent(:),0,Naz,Naz) + spdiags(A_low(2:end),-1,Naz,Naz) + spdiags([0;A_up(:)],1,Naz,Naz);
+    A = A0 + Zswitch;
+    
+    Vnew = ((1/Delta + rho)*speye(Naz,Naz) - A)\(u(:) + V(:)/Delta);
+    Verror = max(abs(Vnew - V(:)));
+    
+    if Verror < accuracy
+        break;
+    end
+    V = reshape(Vnew,Na,Nz);
+end
+
+%% Compute Stationary Equilibrium 
+
+IndexFix = 1;
+b = zeros(Naz,1);
+b(IndexFix) = 0.1;
+ATran = A';
+ATran(IndexFix,:) = [zeros(1,IndexFix-1),1,zeros(1,Naz-IndexFix)];
+gstack = ATran\b;
+g = reshape(gstack/sum(gstack),Na,Nz);
+
+%% Store Result 
+steady.V = V;
+steady.g = g;
+steady.c = c;
+steady.s = s;
+
+steady.A = amatrix(:)'*g(:)*da;
+steady.C = c(:)'*g(:)*da;
